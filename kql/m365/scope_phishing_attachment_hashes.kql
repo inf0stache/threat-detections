@@ -1,0 +1,44 @@
+// Purpose: Expand an email attachment hash to quantify mailbox exposure and downstream endpoint activity.
+// Inputs: SHA256/SHA1/MD5 seed hash, optional sender/recipient domain filters, optional endpoint action filter, lookback window.
+// Output: Message delivery scope plus endpoint file activity tied to matching hashes.
+
+let lookback = 30d;
+let file_hash = "";                       // Preferred seed: SHA256, SHA1, or MD5 from alert/sandbox
+let sender_domain_filter = "";            // Optional sender domain filter
+let recipient_domain_filter = "";         // Optional recipient domain filter
+let endpoint_action_filter = "";          // Optional DeviceFileEvents ActionType filter
+let attachment_scope =
+    EmailAttachmentInfo
+    | where Timestamp >= ago(lookback)
+    | where isnotempty(file_hash)
+    | where SHA256 =~ file_hash or SHA1 =~ file_hash or MD5 =~ file_hash
+    | project AttachTimestamp=Timestamp, NetworkMessageId, FileName, SHA256, SHA1, MD5;
+let message_scope =
+    EmailEvents
+    | where Timestamp >= ago(lookback)
+    | where isempty(sender_domain_filter) or SenderFromDomain =~ sender_domain_filter
+    | where isempty(recipient_domain_filter) or RecipientEmailAddress endswith strcat("@", recipient_domain_filter)
+    | project MsgTimestamp=Timestamp, NetworkMessageId, Subject, SenderFromAddress, SenderFromDomain, RecipientEmailAddress, DeliveryAction;
+let endpoint_scope =
+    DeviceFileEvents
+    | where Timestamp >= ago(lookback)
+    | where isnotempty(file_hash)
+    | where SHA256 =~ file_hash or SHA1 =~ file_hash or MD5 =~ file_hash
+    | where isempty(endpoint_action_filter) or ActionType =~ endpoint_action_filter
+    | extend HashKey = coalesce(SHA256, SHA1, MD5)
+    | project DeviceTimestamp=Timestamp, DeviceName, InitiatingProcessAccountUpn, FileName, FolderPath, SHA256, SHA1, MD5, HashKey, ActionType;
+attachment_scope
+| extend HashKey = coalesce(SHA256, SHA1, MD5)
+| join kind=inner message_scope on NetworkMessageId
+| join kind=leftouter endpoint_scope on HashKey
+| summarize
+    FirstMailSeen=min(MsgTimestamp),
+    LastMailSeen=max(MsgTimestamp),
+    Recipients=dcount(RecipientEmailAddress),
+    DeliveryActions=make_set(DeliveryAction, 10),
+    EndpointHits=countif(isnotempty(DeviceTimestamp)),
+    Devices=dcountif(DeviceName, isnotempty(DeviceTimestamp)),
+    Users=dcountif(InitiatingProcessAccountUpn, isnotempty(DeviceTimestamp)),
+    EndpointActions=make_set(ActionType, 10)
+    by NetworkMessageId, Subject, SenderFromAddress, SenderFromDomain, FileName, SHA256, SHA1, MD5
+| order by Recipients desc, EndpointHits desc, LastMailSeen desc

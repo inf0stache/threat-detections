@@ -1,0 +1,43 @@
+// Purpose: Expand a suspicious URL to determine exposure (who received it) and interaction (who clicked it).
+// Inputs: URL seed (full or partial), optional sender/sender-domain filters, optional recipient domain, lookback window.
+// Output: Per-message and per-user click scope with first/last seen timing and unique user counts.
+
+let lookback = 14d;
+let url_seed = "";                        // Preferred seed: full suspicious URL
+let url_contains = "";                    // Optional partial match when full URL is unavailable
+let sender_from_filter = "";              // Optional sender email filter
+let sender_domain_filter = "";            // Optional sender domain filter
+let recipient_domain_filter = "";         // Optional recipient domain filter
+let include_unclicked_messages = true;     // true = include delivered-but-not-clicked scope
+let matched_urls =
+    EmailUrlInfo
+    | where Timestamp >= ago(lookback)
+    | where (isnotempty(url_seed) and Url =~ url_seed) or (isempty(url_seed) and isnotempty(url_contains) and Url has url_contains)
+    | project UrlTimestamp=Timestamp, NetworkMessageId, Url;
+let message_scope =
+    EmailEvents
+    | where Timestamp >= ago(lookback)
+    | where isempty(sender_from_filter) or SenderFromAddress =~ sender_from_filter
+    | where isempty(sender_domain_filter) or SenderFromDomain =~ sender_domain_filter
+    | where isempty(recipient_domain_filter) or RecipientEmailAddress endswith strcat("@", recipient_domain_filter)
+    | project MsgTimestamp=Timestamp, NetworkMessageId, Subject, SenderFromAddress, SenderFromDomain, RecipientEmailAddress, DeliveryAction;
+let click_scope =
+    UrlClickEvents
+    | where Timestamp >= ago(lookback)
+    | project ClickTimestamp=Timestamp, NetworkMessageId, Url, AccountUpn, ActionType, IsClickedThrough;
+matched_urls
+| join kind=inner message_scope on NetworkMessageId
+| join kind=leftouter click_scope on NetworkMessageId, Url
+| where include_unclicked_messages or isnotempty(ClickTimestamp)
+| summarize
+    FirstMessageSeen=min(MsgTimestamp),
+    LastMessageSeen=max(MsgTimestamp),
+    FirstClick=min(ClickTimestamp),
+    LastClick=max(ClickTimestamp),
+    TargetedRecipients=dcount(RecipientEmailAddress),
+    ClickedUsers=dcountif(AccountUpn, isnotempty(ClickTimestamp)),
+    ClickEvents=countif(isnotempty(ClickTimestamp)),
+    ClickActions=make_set(ActionType, 10),
+    DeliveryActions=make_set(DeliveryAction, 10)
+    by NetworkMessageId, Url, Subject, SenderFromAddress, SenderFromDomain
+| order by ClickedUsers desc, TargetedRecipients desc, LastMessageSeen desc

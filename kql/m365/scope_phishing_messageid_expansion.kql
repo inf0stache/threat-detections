@@ -1,0 +1,51 @@
+// Purpose: Expand a known phishing MessageId to identify recipient blast radius and related artifacts.
+// Inputs: MessageId (preferred), optional subject/sender fallback fields, optional sender domain and recipient domain filters, lookback window.
+// Output: Per-recipient delivery scope with URL and attachment counts for impact sizing.
+
+let lookback = 14d;
+let message_id = "";                     // Preferred seed: Internet Message-ID from alert/mail header
+let fallback_subject_has = "";            // Optional fallback if MessageId is unknown
+let fallback_sender_from = "";            // Optional fallback sender email (exact)
+let sender_domain_filter = "";            // Optional: limit to sender domain (example.com)
+let recipient_domain_filter = "";         // Optional: limit to recipient domain (example.com)
+let include_blocked = true;                // true = include blocked/quarantined mail, false = delivered only
+let base_events =
+    EmailEvents
+    | where Timestamp >= ago(lookback)
+    | where (
+        (isnotempty(message_id) and NetworkMessageId == message_id)
+        or (
+            isempty(message_id)
+            and (
+                (isnotempty(fallback_subject_has) and Subject has fallback_subject_has)
+                or (isnotempty(fallback_sender_from) and SenderFromAddress =~ fallback_sender_from)
+            )
+        )
+    )
+    | where isempty(sender_domain_filter) or SenderFromDomain =~ sender_domain_filter
+    | where isempty(recipient_domain_filter) or RecipientEmailAddress endswith strcat("@", recipient_domain_filter)
+    | where include_blocked or DeliveryAction !in~ ("Blocked", "Junked", "Quarantined")
+    | project Timestamp, NetworkMessageId, Subject, SenderFromAddress, SenderFromDomain, RecipientEmailAddress, DeliveryAction, DeliveryLocation, ThreatTypes;
+let url_counts =
+    EmailUrlInfo
+    | where Timestamp >= ago(lookback)
+    | summarize UrlCount = dcount(Url) by NetworkMessageId;
+let attachment_counts =
+    EmailAttachmentInfo
+    | where Timestamp >= ago(lookback)
+    | summarize AttachmentCount = dcount(SHA256) by NetworkMessageId;
+base_events
+| join kind=leftouter url_counts on NetworkMessageId
+| join kind=leftouter attachment_counts on NetworkMessageId
+| extend UrlCount = coalesce(UrlCount, 0), AttachmentCount = coalesce(AttachmentCount, 0)
+| summarize
+    FirstSeen=min(Timestamp),
+    LastSeen=max(Timestamp),
+    Recipients=dcount(RecipientEmailAddress),
+    DeliveryActions=make_set(DeliveryAction, 10),
+    DeliveryLocations=make_set(DeliveryLocation, 10),
+    ThreatTags=make_set(ThreatTypes, 10),
+    UrlCount=max(UrlCount),
+    AttachmentCount=max(AttachmentCount)
+    by NetworkMessageId, Subject, SenderFromAddress, SenderFromDomain
+| order by Recipients desc, LastSeen desc
