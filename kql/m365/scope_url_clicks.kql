@@ -1,0 +1,16 @@
+// Table note: UrlClickEvents may be empty or unavailable in some tenants.
+// Scope URL click activity tied to a suspicious URL over a simple time window.
+// Returns who clicked, how often, and a small URL set for context.
+
+let start = ago(7d);
+let end = now();
+let url = "login";
+UrlClickEvents
+| where TimeGenerated between (start .. end)
+| where Url contains url
+| summarize
+    total_clicks = count(),
+    unique_users = dcount(AccountUpn),
+    urls = make_set(Url, 5)
+    by AccountUpn, UrlChain
+| order by total_clicks desc

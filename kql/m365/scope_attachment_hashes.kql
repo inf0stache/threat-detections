@@ -1,0 +1,16 @@
+// Table note: EmailAttachmentInfo may be empty or unavailable in some tenants.
+// Scope attachment delivery by hash over a simple time window.
+// Returns volume and recipient coverage with small filename examples.
+
+let start = ago(7d);
+let end = now();
+let hash = "";
+EmailAttachmentInfo
+| where TimeGenerated between (start .. end)
+| where SHA256 contains hash or SHA1 contains hash or MD5 contains hash
+| summarize
+    total_attachments = count(),
+    unique_messages = dcount(NetworkMessageId),
+    files = make_set(FileName, 5)
+    by SHA256, SHA1, MD5, SenderFromAddress, RecipientEmailAddress
+| order by total_attachments desc

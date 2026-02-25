@@ -1,0 +1,17 @@
+// Scope suspicious email activity by subject and sender over a simple time window.
+// Returns recipient volume plus key examples for quick triage.
+
+let start = ago(7d);
+let end = now();
+let subject = "invoice";
+let sender = "contoso";
+EmailEvents
+| where TimeGenerated between (start .. end)
+| where Subject contains subject or SenderFromAddress contains sender
+| summarize
+    total_events = count(),
+    unique_recipients = dcount(RecipientEmailAddress),
+    subjects = make_set(Subject, 5),
+    senders = make_set(SenderFromAddress, 5)
+    by SenderFromAddress, Subject
+| order by total_events desc
