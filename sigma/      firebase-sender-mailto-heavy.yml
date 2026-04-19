@@ -1,0 +1,26 @@
+title: Phishing - Firebase-Hosted Sender with Mass Mailto Reply-Sink Body
+id: 3f8c2a9e-1b4d-4e2a-9c7f-8d1e6b2a4c9d
+status: experimental
+description: |
+  Detects inbound mail originating from *.firebaseapp.com sender domains
+  where the body contains multiple mailto: links, consistent with a
+  reply-harvesting phishing pattern observed April 2026.
+author: inf0stache
+date: 2026-04-19
+references:
+  - https://inf0stache.substack.com/p/firebase-reply-sink
+logsource:
+  product: m365
+  service: exchange
+detection:
+  sender_firebase:
+    SenderFromDomain|endswith: '.firebaseapp.com'
+  body_mailto_heavy:
+    Body|contains: 'mailto:'
+  condition: sender_firebase and body_mailto_heavy
+falsepositives:
+  - Legitimate Firebase-hosted notification apps (rare; investigate sender project name)
+level: high
+tags:
+  - attack.initial_access
+  - attack.t1566.002

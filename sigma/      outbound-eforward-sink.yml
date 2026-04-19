@@ -1,0 +1,28 @@
+title: Outbound Mail to Namecheap Email-Forwarding Reply Sinks
+id: 7a2d4f1c-9e8b-4c3a-b5d7-2e9f1a6c8b3d
+status: experimental
+description: |
+  Detects outbound mail where the recipient domain's MX points to
+  Namecheap's free email-forwarding service (eforward[1-5].registrar-servers.com).
+  Associated with reply-harvesting phishing campaigns using bulk-registered
+  disposable sink domains.
+author: inf0stache
+date: 2026-04-19
+references:
+  - https://inf0stache.substack.com/p/firebase-reply-sink
+logsource:
+  product: m365
+  service: exchange
+detection:
+  outbound:
+    EmailDirection: Outbound
+  recipient_mx_eforward:
+    RecipientMXRecord|contains: 'eforward'
+    RecipientMXRecord|endswith: '.registrar-servers.com'
+  condition: outbound and recipient_mx_eforward
+falsepositives:
+  - Legitimate correspondence with small businesses using Namecheap forwarding
+level: medium
+tags:
+  - attack.exfiltration
+  - attack.t1048
